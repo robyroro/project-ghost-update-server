@@ -1,0 +1,4 @@
+{
+  "comment": "Test identity only: signs CRX3 packages (developer and publisher proof). Never used for a release; sub-project D creates the production keys.",
+  "private_key": "b066c4bed4bb3fd06b7a9eac90dec62478a0d6e2d5562d21c40dba54015cafd1"
+}

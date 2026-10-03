@@ -1,0 +1,4 @@
+{
+  "comment": "Test identity only: signs CUP responses. Never used for a release; sub-project D creates the production keys.",
+  "private_key": "c513ac5f57c325bb35cd1b3684ca4ff4ccd56c871f9e9692a0d6d0a7875e4710"
+}

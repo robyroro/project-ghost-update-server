@@ -1,0 +1,30 @@
+{
+  "comment": "A real update request from Ghost's updater, captured by tools/update_server.py in the end-to-end test of 2026-10-02 (respin -1 asking for an update). For docs/privacy-model.md.",
+  "request": {
+    "request": {
+      "@os": "win",
+      "@updater": "ProjectGhostUpdater",
+      "acceptformat": "crx3,download,puff,run,xz,zucc",
+      "apps": [
+        {
+          "appid": "{c0ff4371-d9ab-461e-bffd-6b0dc2430b02}",
+          "enabled": true,
+          "updatecheck": {},
+          "version": "152.0.7977.14901"
+        }
+      ],
+      "arch": "x64",
+      "ismachine": false,
+      "os": {
+        "arch": "x86_64",
+        "platform": "Windows",
+        "version": "10.0.26100.6690"
+      },
+      "prodversion": "152.0.7977.149",
+      "protocol": "4.0",
+      "requestid": "{51b17675-aa0e-430c-b6c8-22b84fa542a4}",
+      "sessionid": "{a9bc7b01-6a3a-4186-9eee-fea79aed3f5b}",
+      "updaterversion": "152.0.7977.149"
+    }
+  }
+}
