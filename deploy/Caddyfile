@@ -1,0 +1,49 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Ghost's update server. provision.sh replaces @ADDRESS@ with the server's
+# public address. No site has a `log` directive, so nothing records requests;
+# the server's own log drops the loggers that carry request fields, the
+# remote address among them (http.stdlib reports TLS handshake errors with it).
+{
+	admin off
+	skip_install_trust
+	log default {
+		output stderr
+		exclude http.log.access http.log.error http.handlers.reverse_proxy http.stdlib
+	}
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 10s
+			idle 60s
+		}
+	}
+}
+
+https://@ADDRESS@ {
+	tls internal
+
+	handle /update {
+		reverse_proxy 127.0.0.1:8484 {
+			header_up -X-Forwarded-For
+			header_up -X-Forwarded-Proto
+			header_up -X-Forwarded-Host
+		}
+	}
+
+	handle_path /releases/* {
+		route {
+			@package path_regexp ^/[A-Za-z0-9._-]+\.crx3$
+			file_server @package {
+				root /srv/releases
+			}
+			respond 404
+		}
+	}
+
+	handle {
+		respond 404
+	}
+}

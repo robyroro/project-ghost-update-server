@@ -1,0 +1,38 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Ghost's update service, on loopback behind Caddy. The CUP key reaches it
+# as a credential: the file is root's, and the service can't read it itself.
+
+[Unit]
+Description=Ghost update service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 -m ghost_update.service --config /etc/ghost-update/server.json
+Environment=PYTHONPATH=/opt/ghost-update
+LoadCredential=cup_key:/etc/ghost-update/cup_key.json
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+ReadOnlyPaths=/srv/releases
+UMask=0077
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
