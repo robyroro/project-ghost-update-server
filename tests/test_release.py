@@ -18,7 +18,7 @@ class CheckPackageTest(unittest.TestCase):
         cls.good = crx3.build(cls.files, private_key(CRX_KEY_FILE))
 
     def test_a_package_by_ghosts_publisher_key_passes(self):
-        release.check_package(self.good, "mini_installer.exe")
+        release.check_package(self.good, "mini_installer.exe", "dev")
 
     def test_refusals(self):
         cases = {
@@ -32,7 +32,11 @@ class CheckPackageTest(unittest.TestCase):
         for name, (data, installer) in cases.items():
             with self.subTest(name):
                 with self.assertRaises(release.ReleaseError):
-                    release.check_package(data, installer)
+                    release.check_package(data, installer, "dev")
+
+    def test_a_development_package_is_refused_for_the_test_identity(self):
+        with self.assertRaises(release.ReleaseError):
+            release.check_package(self.good, "mini_installer.exe", "test")
 
 
 class CommandsTest(unittest.TestCase):

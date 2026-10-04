@@ -16,6 +16,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from ghost_update import cup, manifest, service
 from ghost_update.identity import BROWSER_APPID, UPDATER_APPID
 from ghost_update.protocol import Release
@@ -39,8 +41,10 @@ class ServiceTest(unittest.TestCase):
         self.key = cup.load_key(CUP_KEY_FILE)
         numbers = self.key.public_key().public_numbers()
         self.public = (numbers.x, numbers.y)
-        self.service = service.Service(0, manifest.Store(self.dir), self.key,
-                                       "https://203.0.113.5")
+        # The fixtures hold one CUP key; a second version is made here.
+        self.other = ec.generate_private_key(ec.SECP256R1())
+        self.service = service.Service(0, manifest.Store(self.dir),
+                                       {1: self.key, 2: self.other}, "https://203.0.113.5")
         threading.Thread(target=self.service.serve_forever, daemon=True).start()
         self.addCleanup(self.service.server_close)
         self.addCleanup(self.service.shutdown)
@@ -75,7 +79,8 @@ class ServiceTest(unittest.TestCase):
     def test_refusals(self):
         cases = {
             "no cup2key": (request_body("1.0.0.0"), "", "/update", 400),
-            "another key version": (request_body("1.0.0.0"), "cup2key=2:12345", "/update", 400),
+            "a key version the server lacks": (request_body("1.0.0.0"), "cup2key=3:12345",
+                                               "/update", 400),
             "invalid request": (b"{", "cup2key=1:12345", "/update", 400),
             "another path": (request_body("1.0.0.0"), "cup2key=1:12345", "/other", 404),
         }
@@ -127,6 +132,19 @@ class ServiceTest(unittest.TestCase):
         self.assertNotIn(REQUEST_MARKER, written)
         self.assertNotIn("127.0.0.1", written)
 
+    def test_each_key_version_signs_its_own_requests(self):
+        numbers = self.other.public_key().public_numbers()
+        body = request_body("152.0.7977.14901")
+        status, proof, data = self.post(body, "cup2key=2:777")
+        self.assertEqual(status, 200)
+        self.assertTrue(reference_verify((numbers.x, numbers.y), "2:777", body, data, proof))
+        self.assertFalse(reference_verify(self.public, "2:777", body, data, proof))
+
+    def test_an_unknown_key_version_is_refused(self):
+        with self.assertLogs("ghost-update", "WARNING"):
+            status, _, _ = self.post(request_body("152.0.7977.14901"), "cup2key=3:777")
+        self.assertEqual(status, 400)
+
 
 class MainTest(unittest.TestCase):
     def setUp(self):
@@ -148,7 +166,20 @@ class MainTest(unittest.TestCase):
         (self.dir / manifest.FILE_NAME).write_text("{")
         with self.assertLogs("ghost-update", "ERROR"):
             self.assertEqual(service.main(["--config", str(self.config),
-                                           "--key", str(CUP_KEY_FILE)]), 1)
+                                           "--key", f"1={CUP_KEY_FILE}"]), 1)
+
+    def test_keys_from_systemd_credentials(self):
+        creds = self.dir / "creds"
+        creds.mkdir()
+        shutil.copy(CUP_KEY_FILE, creds / "cup_keys_1.json")
+        (creds / "unrelated").write_text("x")
+        self.assertEqual(service.credential_keys(creds), {1: creds / "cup_keys_1.json"})
+
+    def test_a_key_argument_names_its_version(self):
+        self.assertEqual(service.parse_key("2=k.json"), (2, Path("k.json")))
+        for bad in ("k.json", "x=k.json", "2="):
+            with self.assertRaises(ValueError):
+                service.parse_key(bad)
 
 
 if __name__ == "__main__":

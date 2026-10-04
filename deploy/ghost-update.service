@@ -2,8 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #
-# Ghost's update service, on loopback behind Caddy. The CUP key reaches it
-# as a credential: the file is root's, and the service can't read it itself.
+# Ghost's update service, on loopback behind Caddy. The CUP keys reach it as
+# credentials, one file per key version: the files are root's, and the
+# service can't read them itself.
 
 [Unit]
 Description=Ghost update service
@@ -12,7 +13,7 @@ After=network.target
 [Service]
 ExecStart=/usr/bin/python3 -m ghost_update.service --config /etc/ghost-update/server.json
 Environment=PYTHONPATH=/opt/ghost-update
-LoadCredential=cup_key:/etc/ghost-update/cup_key.json
+LoadCredential=cup_keys:/etc/ghost-update/cup_keys
 DynamicUser=yes
 ProtectSystem=strict
 ProtectHome=yes

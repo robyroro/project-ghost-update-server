@@ -20,8 +20,6 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from ghost_update.identity import CUP_KEY_VERSION
-
 _CUP2KEY = re.compile(r"^([1-9][0-9]{0,3}):[A-Za-z0-9_=-]{1,128}$")
 
 
@@ -31,10 +29,16 @@ def load_key(path: Path) -> ec.EllipticCurvePrivateKey:
     return ec.derive_private_key(value, ec.SECP256R1())
 
 
-def valid_cup2key(cup2key: str) -> bool:
-    """`<key version>:<nonce>`, for the key version this server signs with."""
+def cup2key_version(cup2key: str, versions) -> int | None:
+    """The key version `<version>:<nonce>` names, if this server has that key.
+
+    Each client announces the key it holds; during a rotation the server has
+    both, and signs each response with the one asked for."""
     match = _CUP2KEY.match(cup2key)
-    return bool(match) and int(match.group(1)) == CUP_KEY_VERSION
+    if not match:
+        return None
+    version = int(match.group(1))
+    return version if version in versions else None
 
 
 def proof(key: ec.EllipticCurvePrivateKey, cup2key: str, request_body: bytes,

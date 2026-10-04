@@ -33,11 +33,12 @@ class CupTest(unittest.TestCase):
                                               proof))
             self.assertFalse(reference_verify(self.public, "1:12346", request, response, proof))
 
-    def test_cup2key(self):
-        for good in ("1:12345", "1:SUUSbBaXj4Q5AofrKJTxPrbrwU_XSvKjCY1jp_dvqec"):
-            self.assertTrue(cup.valid_cup2key(good), good)
-        for bad in ("", "1", "1:", "2:12345", "x:1", "1:a b", "1:" + "a" * 129, "01:1"):
-            self.assertFalse(cup.valid_cup2key(bad), bad)
+    def test_cup2key_names_a_version_this_server_has(self):
+        for good, version in (("1:12345", 1),
+                              ("2:SUUSbBaXj4Q5AofrKJTxPrbrwU_XSvKjCY1jp_dvqec", 2)):
+            self.assertEqual(cup.cup2key_version(good, {1, 2}), version, good)
+        for bad in ("", "1", "1:", "3:12345", "x:1", "1:a b", "1:" + "a" * 129, "01:1"):
+            self.assertIsNone(cup.cup2key_version(bad, {1, 2}), bad)
 
 
 if __name__ == "__main__":

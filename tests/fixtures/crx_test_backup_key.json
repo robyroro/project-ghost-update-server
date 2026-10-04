@@ -1,0 +1,4 @@
+{
+  "comment": "Development identity only: the backup CRX publisher key. Committed, so anyone can sign with it; only development builds pin it.",
+  "private_key": "bcebb1c52cbebe423f406bfc1c91b83b44e5546478ad790e6bc1de02a9d22384"
+}

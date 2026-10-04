@@ -22,17 +22,21 @@ The update server of [Project Ghost](https://github.com/robyroro/project-ghost),
 
 ## Deploying
 
-    python tools/deploy.py --host root@<address> --address <address> --cup-key <key file>
+    python tools/deploy.py --host root@<address> --address <address> --cup-key <version>=<key file>
 
 The first run, as root on a fresh Debian 12 server, creates the administrator `ghost` and turns off root's SSH login; later runs use `--host ghost@<address>`. Each run changes only what differs.
 
+Each `--cup-key` is one CUP key and the version clients announce for it in `cup2key`. During a rotation the server holds both versions and signs each response with the one asked for; a later deployment without the old version removes it.
+
 ## Publishing a release
 
-    python -m ghost_update.release --crx <package.crx3> --appid <app ID> --version <version> --host ghost@<address>
+    python -m ghost_update.release --crx <package.crx3> --appid <app ID> --version <version> --identity test --host ghost@<address>
+
+The package must carry a proof by one of the identity's publisher keys, the primary or the backup.
 
 ## Test identity
 
-Until the final product name and production keys exist (the browser's Phase 2, sub-project D), the server uses the browser's test keys, whose private halves are public in the browser's repository. Only test machines trust them.
+Until the final product name and production keys exist, the server runs the browser's test identity: CUP key version 2 and the publisher keys from its key ceremony (the browser's `docs/signing/`). The development identity's keys, whose private halves are public in the browser's repository, serve the tests. Only test machines trust either.
 
 ## License
 

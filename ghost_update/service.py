@@ -3,9 +3,12 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """The update service: answers POST /update on loopback, behind Caddy.
 
-    python3 -m ghost_update.service --config /etc/ghost-update/server.json [--key FILE]
+    python3 -m ghost_update.service --config /etc/ghost-update/server.json
+        [--key VERSION=FILE ...]
 
-The CUP key defaults to systemd's credential "cup_key" ($CREDENTIALS_DIRECTORY).
+The CUP keys default to systemd's credentials cup_keys_<version>.json
+($CREDENTIALS_DIRECTORY), one per key version, so a key can be rotated while
+clients still ask for the old one.
 The service never sees a client's address, since Caddy proxies every request
 from loopback, and it writes nothing that comes from a request.
 """
@@ -18,6 +21,7 @@ import http.server
 import json
 import logging
 import os
+import re
 import sys
 import urllib.parse
 from pathlib import Path
@@ -50,8 +54,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length)
         cup2key = urllib.parse.parse_qs(url.query).get("cup2key", [""])[0]
-        if not cup.valid_cup2key(cup2key):
-            self._refuse(400, "a request without a valid cup2key")
+        version = cup.cup2key_version(cup2key, self.server.keys)
+        if version is None:
+            self._refuse(400, "a request without a cup2key for a key this server has")
             return
         try:
             payload = protocol.respond(body, self.server.store.current().releases(),
@@ -61,7 +66,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         self._send(200, payload, {
             "Content-Type": "application/json",
-            "X-Cup-Server-Proof": cup.proof(self.server.key, cup2key, body, payload)})
+            "X-Cup-Server-Proof": cup.proof(self.server.keys[version], cup2key, body, payload)})
 
     def do_GET(self) -> None:
         self._send(404)
@@ -86,34 +91,55 @@ class Handler(http.server.BaseHTTPRequestHandler):
 class Service(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port: int, store: manifest.Store, key: ec.EllipticCurvePrivateKey,
-                 public_url: str):
+    def __init__(self, port: int, store: manifest.Store,
+                 keys: dict[int, ec.EllipticCurvePrivateKey], public_url: str):
         super().__init__(("127.0.0.1", port), Handler)
-        self.store, self.key = store, key
+        self.store, self.keys = store, keys
         self.download_base = public_url.rstrip("/") + "/releases"
+
+
+_CREDENTIAL = re.compile(r"^cup_keys_([1-9][0-9]{0,3})\.json$")
+
+
+def credential_keys(directory: Path) -> dict[int, Path]:
+    """systemd's LoadCredential=cup_keys:<dir> names each file cup_keys_<file>."""
+    return {int(m.group(1)): directory / name for name in sorted(os.listdir(directory))
+            if (m := _CREDENTIAL.match(name))}
+
+
+def parse_key(text: str) -> tuple[int, Path]:
+    version, _, path = text.partition("=")
+    if not version.isdigit() or not path:
+        raise ValueError(f"--key takes VERSION=FILE, not {text!r}")
+    return int(version), Path(path)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--key", type=Path, help="the CUP key file (tests and development)")
+    parser.add_argument("--key", action="append", default=[],
+                        help="VERSION=FILE, a CUP key (tests and development)")
     args = parser.parse_args(argv)
     if not log.handlers:
         handler = logging.StreamHandler(sys.stderr)
         handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
         log.addHandler(handler)
         log.setLevel(logging.INFO)
-    key_path = args.key
-    if key_path is None and "CREDENTIALS_DIRECTORY" in os.environ:
-        key_path = Path(os.environ["CREDENTIALS_DIRECTORY"]) / "cup_key"
-    if key_path is None:
-        log.error("not starting: no CUP key (--key, or systemd's LoadCredential=cup_key)")
+    try:
+        paths = dict(parse_key(k) for k in args.key)
+    except ValueError as e:
+        log.error("not starting: %s", e)
+        return 1
+    if not paths and "CREDENTIALS_DIRECTORY" in os.environ:
+        paths = credential_keys(Path(os.environ["CREDENTIALS_DIRECTORY"]))
+    if not paths:
+        log.error("not starting: no CUP key (--key, or systemd's LoadCredential=cup_keys)")
         return 1
     try:
         config = json.loads(args.config.read_text(encoding="utf-8"))
-        key = cup.load_key(key_path)
+        keys = {version: cup.load_key(path) for version, path in paths.items()}
         store = manifest.Store(Path(config["releases_dir"]))
-        server = Service(int(config["port"]), store, key, config["public_url"])
+        server = Service(int(config["port"]), store, keys, config["public_url"])
     except (OSError, ValueError, KeyError) as e:
         log.error("not starting: %s", e)
         return 1

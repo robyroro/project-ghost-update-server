@@ -90,9 +90,21 @@ install_file "$BUNDLE/deploy/ghost-update-admin" /usr/local/sbin/ghost-update-ad
 config=$(rendered "$BUNDLE/deploy/server.json")
 if install_file "$config" /etc/ghost-update/server.json 644; then SERVICE_CHANGED=1; fi
 rm -f "$config"
-if install_file "$BUNDLE/cup_key.json" /etc/ghost-update/cup_key.json 600; then
-  SERVICE_CHANGED=1
-fi
+compgen -G "$BUNDLE/cup_keys/*.json" > /dev/null || { echo "the bundle has no CUP key" >&2; exit 2; }
+ensure_dir /etc/ghost-update/cup_keys 700 root
+for key in "$BUNDLE"/cup_keys/*.json; do
+  if install_file "$key" "/etc/ghost-update/cup_keys/$(basename "$key")" 600; then
+    SERVICE_CHANGED=1
+  fi
+done
+for key in /etc/ghost-update/cup_keys/*.json; do
+  [ -e "$key" ] || continue
+  if [ ! -e "$BUNDLE/cup_keys/$(basename "$key")" ]; then
+    rm -f "$key"
+    changed "$key (removed)"
+    SERVICE_CHANGED=1
+  fi
+done
 if install_file "$BUNDLE/deploy/ghost-update.service" /etc/systemd/system/ghost-update.service 644; then
   systemctl daemon-reload
   SERVICE_CHANGED=1

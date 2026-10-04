@@ -4,6 +4,7 @@
 
 import hashlib
 import os
+import re
 import unittest
 from pathlib import Path
 
@@ -21,6 +22,10 @@ SOURCES = {
                               "20deb525f5329d02d60cd490c44399cfa9e40857153d8d61d5f23035c4d97dd4"),
     "crx_test_key.json": ("test/updater/crx_test_key.json",
                           "f918a7e5f05b0c0b1a96acdb6d632bbbd9ab3db34099407e28403877a5a26052"),
+    "crx_test_backup_key.json": ("test/updater/crx_test_backup_key.json",
+                                 "cd88c875866fc41c76acb8c5cc39dbfbf91f0158390de06cfe36a9b694280f7f"),
+    "keys_test.h": ("branding/keys/test.h",
+                    "31b923aa801178788399d421c85d128c2ce0df03372aa67f4dd0b582231ff6cb"),
 }
 
 
@@ -41,10 +46,18 @@ class FixturesTest(unittest.TestCase):
                 self.assertEqual((FIXTURES / name).read_bytes(),
                                  (Path(webops) / source).read_bytes())
 
-    def test_the_publisher_key_hash_is_the_test_key(self):
-        public = ecdsa_p256.spki(ecdsa_p256.public_key(private_key(CRX_KEY_FILE)))
-        self.assertEqual(hashlib.sha256(public).hexdigest(), identity.PUBLISHER_KEY_SHA256)
+    def test_the_development_hashes_are_the_committed_keys(self):
+        hashes = tuple(
+            hashlib.sha256(ecdsa_p256.spki(ecdsa_p256.public_key(private_key(f)))).hexdigest()
+            for f in (CRX_KEY_FILE, FIXTURES / "crx_test_backup_key.json"))
+        self.assertEqual(identity.PUBLISHER_KEY_SHA256S["dev"], hashes)
 
+    def test_the_test_identity_hashes_are_the_browsers(self):
+        text = (FIXTURES / "keys_test.h").read_text(encoding="utf-8")
+        block = re.search(r"kCrxPublisherKeyHashes = \{\{\n(.*?)\}\};", text, re.S).group(1)
+        hashes = tuple("".join(re.findall(r"0x([0-9a-f]{2})", b))
+                       for b in re.findall(r"\{\{(.*?)\}\}", block, re.S))
+        self.assertEqual(identity.PUBLISHER_KEY_SHA256S["test"], hashes)
 
 if __name__ == "__main__":
     unittest.main()

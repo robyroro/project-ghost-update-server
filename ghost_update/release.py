@@ -3,12 +3,13 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """Publishes a release: checks a CRX3 here, uploads it, activates it.
 
-    python -m ghost_update.release --crx F --appid A --version V --host USER@HOST
-           [--installer mini_installer.exe] [--arguments ARGS]
+    python -m ghost_update.release --crx F --appid A --version V --identity I
+           --host USER@HOST [--installer mini_installer.exe] [--arguments ARGS]
 
 Runs on the build machine with the system's ssh and scp. The package must
-carry a valid proof by Ghost's publisher key and contain its installer; the
-server's ghost-update-admin then refuses a version that isn't newer.
+carry a valid proof by one of the identity's publisher keys (identity.py)
+and contain its installer; the server's ghost-update-admin then refuses a
+version that isn't newer.
 """
 
 from __future__ import annotations
@@ -36,14 +37,15 @@ class ReleaseError(ValueError):
     pass
 
 
-def check_package(data: bytes, installer: str,
-                  publisher_key_sha256: str = identity.PUBLISHER_KEY_SHA256) -> None:
+def check_package(data: bytes, installer: str, identity_name: str) -> None:
+    """The package must carry a proof by one of the identity's publisher keys."""
     try:
         keys = crx3.verified_keys(data)
         archive = crx3.parse(data).archive
     except (ValueError, IndexError):
         raise ReleaseError("not a CRX3 package") from None
-    if not any(hashlib.sha256(key).hexdigest() == publisher_key_sha256 for key in keys):
+    pinned = identity.PUBLISHER_KEY_SHA256S[identity_name]
+    if not any(hashlib.sha256(key).hexdigest() in pinned for key in keys):
         raise ReleaseError("no valid proof by Ghost's publisher key")
     try:
         names = zipfile.ZipFile(io.BytesIO(archive)).namelist()
@@ -75,11 +77,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", required=True, help="USER@HOST of the server")
     parser.add_argument("--installer", default=admin.DEFAULT_INSTALLER)
     parser.add_argument("--arguments", default=admin.DEFAULT_ARGUMENTS)
+    parser.add_argument("--identity", choices=sorted(identity.PUBLISHER_KEY_SHA256S),
+                        required=True, help="whose publisher keys the package must carry")
     args = parser.parse_args(argv)
     try:
         steps = commands(args.crx, args.appid, args.version, args.host, args.installer,
                          args.arguments)
-        check_package(args.crx.read_bytes(), args.installer)
+        check_package(args.crx.read_bytes(), args.installer, args.identity)
     except (OSError, ReleaseError) as e:
         print(f"release: {e}", file=sys.stderr)
         return 1

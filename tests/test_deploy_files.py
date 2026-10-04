@@ -51,7 +51,7 @@ class UnitTest(unittest.TestCase):
                      "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX",
                      "SystemCallFilter=@system-service", "CapabilityBoundingSet=",
                      "ReadOnlyPaths=/srv/releases",
-                     "LoadCredential=cup_key:/etc/ghost-update/cup_key.json",
+                     "LoadCredential=cup_keys:/etc/ghost-update/cup_keys",
                      "ExecStart=/usr/bin/python3 -m ghost_update.service "
                      "--config /etc/ghost-update/server.json"):
             self.assertIn(line, lines)

@@ -17,11 +17,11 @@ class BundleTest(unittest.TestCase):
     def test_the_bundle_holds_the_package_the_deployment_and_the_key(self):
         out = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, out)
-        bundle = deploy.write_bundle(out / "bundle.tar.gz", CUP_KEY_FILE)
+        bundle = deploy.write_bundle(out / "bundle.tar.gz", {1: CUP_KEY_FILE})
         with tarfile.open(bundle) as archive:
             names = set(archive.getnames())
         for name in ("ghost_update/service.py", "ghost_update/reference/crx3.py",
-                     "deploy/provision.sh", "deploy/Caddyfile", "cup_key.json"):
+                     "deploy/provision.sh", "deploy/Caddyfile", "cup_keys/1.json"):
             self.assertIn(name, names)
         self.assertFalse([n for n in names if "__pycache__" in n or n.startswith("tests/")])
 
