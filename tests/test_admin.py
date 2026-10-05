@@ -34,6 +34,93 @@ class AdminTest(unittest.TestCase):
     def current(self) -> manifest.Manifest:
         return manifest.parse((self.dir / manifest.FILE_NAME).read_bytes(), self.dir)
 
+    def admin(self, *args: str) -> tuple[int, str]:
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            try:
+                code = admin.main(["--releases-dir", str(self.dir), *args])
+            except SystemExit as e:  # argparse refusing an argument
+                code = e.code
+        return code, out.getvalue()
+
+    def stage(self, version: str, fraction: str = "0.01", content: bytes = b"candidate") -> int:
+        staged = self.dir / "staging" / f"browser-{version}.crx3"
+        staged.write_bytes(content)
+        return self.admin("stage", "--staged", str(staged), "--appid", BROWSER_APPID,
+                          "--version", version, "--fraction", fraction)[0]
+
+    def test_stage_makes_a_candidate_beside_the_active_release(self):
+        self.assertEqual(self.activate("152.0.7977.14902"), 0)
+        self.assertEqual(self.stage("152.0.7977.14903"), 0)
+        entry = self.current().apps[BROWSER_APPID]
+        self.assertEqual(entry.active.version, "152.0.7977.14902")
+        self.assertEqual((entry.candidate.release.version, entry.candidate.fraction),
+                         ("152.0.7977.14903", 0.01))
+        self.assertEqual(entry.candidate.release.sha256, hashlib.sha256(b"candidate").hexdigest())
+
+    def test_one_candidate_at_a_time(self):
+        self.assertEqual(self.stage("152.0.7977.14903"), 0)
+        code, text = self.admin("stage", "--staged", "x", "--appid", BROWSER_APPID,
+                                "--version", "152.0.7977.14904", "--fraction", "0")
+        self.assertEqual(code, 1)
+        self.assertIn("a candidate exists", text)
+
+    def test_a_candidate_must_be_newer(self):
+        self.assertEqual(self.activate("152.0.7977.14903"), 0)
+        self.assertEqual(self.stage("152.0.7977.14902"), 1)
+
+    def test_set_fraction_and_halt(self):
+        self.stage("152.0.7977.14903")
+        self.assertEqual(self.admin("set-fraction", "--appid", BROWSER_APPID,
+                                    "--fraction", "0.25")[0], 0)
+        self.assertEqual(self.current().apps[BROWSER_APPID].candidate.fraction, 0.25)
+        code, text = self.admin("halt", "--appid", BROWSER_APPID)
+        self.assertEqual(code, 0)
+        self.assertIn("halted", text)
+        self.assertEqual(self.current().apps[BROWSER_APPID].candidate.fraction, 0.0)
+
+    def test_a_fraction_out_of_range_is_refused(self):
+        self.stage("152.0.7977.14903")
+        self.assertEqual(self.admin("set-fraction", "--appid", BROWSER_APPID,
+                                    "--fraction", "1.5")[0], 2)
+
+    def test_promote(self):
+        for version in ("152.0.7977.14901", "152.0.7977.14902", "152.0.7977.14903"):
+            self.assertEqual(self.activate(version, content=version.encode()), 0)
+        self.stage("152.0.7977.14904")
+        self.assertEqual(self.admin("promote", "--appid", BROWSER_APPID)[0], 0)
+        entry = self.current().apps[BROWSER_APPID]
+        self.assertEqual(entry.active.version, "152.0.7977.14904")
+        self.assertEqual([p.version for p in entry.previous],
+                         ["152.0.7977.14903", "152.0.7977.14902"])
+        self.assertIsNone(entry.candidate)
+        names = sorted(p.name for p in self.dir.glob("*.crx3"))
+        self.assertEqual(len(names), 3)
+        self.assertFalse(any("14901" in name for name in names))
+
+    def test_drop(self):
+        self.stage("152.0.7977.14903")
+        name = self.current().apps[BROWSER_APPID].candidate.release.file
+        self.assertEqual(self.admin("drop", "--appid", BROWSER_APPID)[0], 0)
+        self.assertIsNone(self.current().apps[BROWSER_APPID].candidate)
+        self.assertFalse((self.dir / name).exists())
+
+    def test_commands_without_a_candidate_are_refused(self):
+        for command in (["promote"], ["drop"], ["halt"], ["set-fraction", "--fraction", "0.5"]):
+            with self.subTest(command[0]):
+                code, text = self.admin(command[0], "--appid", BROWSER_APPID, *command[1:])
+                self.assertEqual(code, 1)
+                self.assertIn("no candidate", text)
+
+    def test_activate_is_refused_while_a_candidate_exists(self):
+        self.stage("152.0.7977.14903")
+        self.assertEqual(self.activate("152.0.7977.14904"), 1)
+
+    def test_list_shows_the_candidate(self):
+        self.stage("152.0.7977.14903", fraction="0.05")
+        code, text = self.admin("list")
+        self.assertIn("candidate 152.0.7977.14903 at 5%", text)
+
     def test_init_creates_ghost_apps_once(self):
         self.assertEqual(self.current().releases(), {BROWSER_APPID: None, UPDATER_APPID: None})
         before = (self.dir / manifest.FILE_NAME).read_bytes()
