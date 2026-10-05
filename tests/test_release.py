@@ -53,6 +53,16 @@ class CommandsTest(unittest.TestCase):
               "--installer mini_installer.exe "
               "--arguments '--verbose-logging --do-not-launch-chrome'"]])
 
+    def test_with_a_fraction_the_package_becomes_the_candidate(self):
+        staged = "/srv/releases/staging/c0ff4371-d9ab-461e-bffd-6b0dc2430b02-152.0.7977.14902.crx3"
+        steps = release.commands(Path("update.crx3"), BROWSER_APPID, "152.0.7977.14902",
+                                 "ghost@203.0.113.5", "mini_installer.exe", "", fraction=0.01)
+        self.assertEqual(steps[1], ["ssh", "ghost@203.0.113.5",
+                                    f"sudo ghost-update-admin stage --staged {staged} --appid "
+                                    "'{c0ff4371-d9ab-461e-bffd-6b0dc2430b02}' --version "
+                                    "152.0.7977.14902 --installer mini_installer.exe "
+                                    "--arguments '' --fraction 0.01"])
+
     def test_a_bad_version_or_app_id_is_refused(self):
         for appid, version in ((BROWSER_APPID, "1.2.3"), ("{x}", "1.2.3.4"),
                                (BROWSER_APPID + ";rm", "1.2.3.4")):

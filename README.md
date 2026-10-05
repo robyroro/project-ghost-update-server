@@ -34,6 +34,17 @@ Each `--cup-key` is one CUP key and the version clients announce for it in `cup2
 
 The package must carry a proof by one of the identity's publisher keys, the primary or the backup.
 
+## Rolling a release out
+
+With `--fraction F`, the release CLI uploads the package as the app's **candidate**, beside the active release. The server offers it to fraction F of update checks: requests carry no identifier, so each check draws on its own, and at about five checks a day F = 0.01 reaches about 5 % of clients a day. Then, on the server:
+
+    sudo ghost-update-admin set-fraction --appid <app ID> --fraction 0.1
+    sudo ghost-update-admin halt --appid <app ID>       # fraction 0: no new client gets it
+    sudo ghost-update-admin promote --appid <app ID>    # it becomes the active release
+    sudo ghost-update-admin drop --appid <app ID>       # forget it and delete its package
+
+The browser's `tools/release.py rollout|halt|promote|drop --host <host>` runs these over SSH. A client is never offered a version older than its own, so a halted release stays on the clients that took it.
+
 ## Test identity
 
 Until the final product name and production keys exist, the server runs the browser's test identity: CUP key version 2 and the publisher keys from its key ceremony (the browser's `docs/signing/`). The development identity's keys, whose private halves are public in the browser's repository, serve the tests. Only test machines trust either.

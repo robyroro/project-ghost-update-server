@@ -5,11 +5,14 @@
 
     python -m ghost_update.release --crx F --appid A --version V --identity I
            --host USER@HOST [--installer mini_installer.exe] [--arguments ARGS]
+           [--fraction F]
 
 Runs on the build machine with the system's ssh and scp. The package must
 carry a valid proof by one of the identity's publisher keys (identity.py)
 and contain its installer; the server's ghost-update-admin then refuses a
-version that isn't newer.
+version that isn't newer. With --fraction, the package becomes the app's
+candidate, offered to that fraction of update checks; without it, it becomes
+the active release.
 """
 
 from __future__ import annotations
@@ -56,7 +59,7 @@ def check_package(data: bytes, installer: str, identity_name: str) -> None:
 
 
 def commands(crx: Path, appid: str, version: str, host: str, installer: str,
-             arguments: str) -> list[list[str]]:
+             arguments: str, fraction: float | None = None) -> list[list[str]]:
     if not _APPID.match(appid):
         raise ReleaseError("the app ID is not a GUID in braces")
     try:
@@ -64,9 +67,12 @@ def commands(crx: Path, appid: str, version: str, host: str, installer: str,
     except InvalidRequest:
         raise ReleaseError("the version is not four dotted integers") from None
     staged = f"{STAGING}/{appid.strip('{}').lower()}-{version}.crx3"
-    activate = ["sudo", "ghost-update-admin", "activate", "--staged", staged, "--appid", appid,
-                "--version", version, "--installer", installer, "--arguments", arguments]
-    return [["scp", "-q", str(crx), f"{host}:{staged}"], ["ssh", host, shlex.join(activate)]]
+    action = "activate" if fraction is None else "stage"
+    admin_args = ["sudo", "ghost-update-admin", action, "--staged", staged, "--appid", appid,
+                  "--version", version, "--installer", installer, "--arguments", arguments]
+    if fraction is not None:
+        admin_args += ["--fraction", str(fraction)]
+    return [["scp", "-q", str(crx), f"{host}:{staged}"], ["ssh", host, shlex.join(admin_args)]]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -79,10 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arguments", default=admin.DEFAULT_ARGUMENTS)
     parser.add_argument("--identity", choices=sorted(identity.PUBLISHER_KEY_SHA256S),
                         required=True, help="whose publisher keys the package must carry")
+    parser.add_argument("--fraction", type=float,
+                        help="upload as the candidate, offered to this fraction of update checks")
     args = parser.parse_args(argv)
     try:
         steps = commands(args.crx, args.appid, args.version, args.host, args.installer,
-                         args.arguments)
+                         args.arguments, args.fraction)
         check_package(args.crx.read_bytes(), args.installer, args.identity)
     except (OSError, ReleaseError) as e:
         print(f"release: {e}", file=sys.stderr)
