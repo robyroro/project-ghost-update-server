@@ -3,11 +3,16 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """releases.json: the app IDs the server knows and each one's active release.
 
-    {"apps": {"{app id}": {"active": <release> | null, "previous": [<release>, ...]}}}
+    {"apps": {"{app id}": {"active": <release> | null, "previous": [<release>, ...],
+                           "candidate": <release with "fraction"> | null}}}
 
 A release is {"version", "file", "size", "sha256", "installer", "arguments"},
 its file in the releases directory. `previous` lists up to two earlier
 releases whose files stay on disk. This file is the server's whole state.
+
+The candidate, when there is one, is newer than the active release and is
+offered to its fraction of update checks (sub-project E). Files written before
+it existed have no "candidate".
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from ghost_update.protocol import InvalidRequest, Release, parse_version
+from ghost_update.protocol import InvalidRequest, Offer, Release, parse_version
 
 FILE_NAME = "releases.json"
 KEPT = 3  # the active release and two previous ones
@@ -36,9 +41,16 @@ class ManifestError(ValueError):
 
 
 @dataclass(frozen=True)
+class Candidate:
+    release: Release
+    fraction: float
+
+
+@dataclass(frozen=True)
 class AppEntry:
     active: Release | None
     previous: tuple[Release, ...]
+    candidate: Candidate | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +59,11 @@ class Manifest:
 
     def releases(self) -> dict[str, Release | None]:
         return {appid: entry.active for appid, entry in self.apps.items()}
+
+    def offers(self) -> dict[str, Offer]:
+        return {appid: Offer(entry.active, entry.candidate.release, entry.candidate.fraction)
+                if entry.candidate else Offer(entry.active)
+                for appid, entry in self.apps.items()}
 
 
 def _release(value: object, releases_dir: Path) -> Release:
@@ -73,6 +90,20 @@ def _release(value: object, releases_dir: Path) -> Release:
     return Release(**value)
 
 
+def _candidate(value: object, releases_dir: Path, active: Release | None) -> Candidate:
+    if not isinstance(value, dict) or "fraction" not in value:
+        raise ManifestError("a candidate is a release with a fraction")
+    fraction = value["fraction"]
+    if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) \
+            or not 0 <= fraction <= 1:
+        raise ManifestError(f"bad fraction {fraction!r}: from 0 to 1")
+    release = _release({k: v for k, v in value.items() if k != "fraction"}, releases_dir)
+    if active and parse_version(release.version) <= parse_version(active.version):
+        raise ManifestError(f"the candidate {release.version} is not newer than the active "
+                            f"{active.version}")
+    return Candidate(release, float(fraction))
+
+
 def parse(data: bytes, releases_dir: Path) -> Manifest:
     try:
         doc = json.loads(data)
@@ -85,19 +116,29 @@ def parse(data: bytes, releases_dir: Path) -> Manifest:
     for appid, entry in apps.items():
         if not _APPID.match(appid):
             raise ManifestError(f"bad app ID {appid!r}: lowercase, in braces")
-        if not isinstance(entry, dict) or set(entry) != {"active", "previous"}:
-            raise ManifestError(f"{appid}: needs active and previous")
+        if not isinstance(entry, dict) or not {"active", "previous"} <= set(entry) \
+                or not set(entry) <= {"active", "previous", "candidate"}:
+            raise ManifestError(f"{appid}: needs active and previous, and may have candidate")
         previous = entry["previous"]
         if not isinstance(previous, list) or len(previous) > KEPT - 1:
             raise ManifestError(f"{appid}: previous is a list of at most {KEPT - 1}")
         active = None if entry["active"] is None else _release(entry["active"], releases_dir)
-        out[appid] = AppEntry(active, tuple(_release(p, releases_dir) for p in previous))
+        candidate = (None if entry.get("candidate") is None
+                     else _candidate(entry["candidate"], releases_dir, active))
+        out[appid] = AppEntry(active, tuple(_release(p, releases_dir) for p in previous),
+                              candidate)
     return Manifest(out)
 
 
 def serialize(manifest: Manifest) -> bytes:
+    def candidate(entry: AppEntry) -> dict | None:
+        if entry.candidate is None:
+            return None
+        return {**asdict(entry.candidate.release), "fraction": entry.candidate.fraction}
+
     doc = {"apps": {appid: {"active": asdict(entry.active) if entry.active else None,
-                            "previous": [asdict(p) for p in entry.previous]}
+                            "previous": [asdict(p) for p in entry.previous],
+                            "candidate": candidate(entry)}
                     for appid, entry in sorted(manifest.apps.items())}}
     return (json.dumps(doc, indent=2) + "\n").encode()
 

@@ -3,14 +3,16 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 """Omaha 4 update checks: parse a request, answer each app, build the response.
 
-No I/O: the service passes in the request body and the active releases.
+No I/O: the service passes in the request body and each app's offer.
 """
 
 from __future__ import annotations
 
 import datetime
 import json
+import random
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 
 RESPONSE_PREFIX = ")]}'\n"
@@ -31,6 +33,26 @@ class Release:
     sha256: str
     installer: str
     arguments: str
+
+
+@dataclass(frozen=True)
+class Offer:
+    """An app's releases: the active one, and a candidate offered to a fraction of checks.
+
+    Requests carry no identifier, so the fraction applies to each check, not
+    to a stable group of clients: at five checks a day, 0.01 reaches about 5 %
+    of clients a day. 0 halts the candidate."""
+    active: Release | None
+    candidate: Release | None = None
+    fraction: float = 0.0
+
+    def choose(self, draw: Callable[[], float]) -> Release | None:
+        if self.candidate is not None and draw() < self.fraction:
+            return self.candidate
+        return self.active
+
+
+_RANDOM = random.SystemRandom()
 
 
 def parse_version(text: object) -> tuple[int, ...]:
@@ -56,15 +78,16 @@ def parse_request(body: bytes) -> list[dict]:
     return apps
 
 
-def answer(app: dict, releases: dict[str, Release | None], download_base: str) -> dict:
-    """One app's answer. `releases` maps lowercase app IDs to their active release."""
+def answer(app: dict, offers: dict[str, Offer], download_base: str,
+           draw: Callable[[], float]) -> dict:
+    """One app's answer. `offers` maps lowercase app IDs to their releases."""
     appid = app["appid"]
-    if appid.lower() not in releases:
+    if appid.lower() not in offers:
         return {"appid": appid, "status": "error-unknownApplication"}
     entry: dict = {"appid": appid, "status": "ok"}
     if "updatecheck" not in app:
         return entry  # an event or a ping: acknowledged, nothing recorded
-    release = releases[appid.lower()]
+    release = offers[appid.lower()].choose(draw)
     installed = parse_version(app.get("version") or NULL_VERSION)
     if release is None or installed >= parse_version(release.version):
         entry["updatecheck"] = {"status": "noupdate"}
@@ -79,10 +102,11 @@ def answer(app: dict, releases: dict[str, Release | None], download_base: str) -
     return entry
 
 
-def respond(body: bytes, releases: dict[str, Release | None], download_base: str,
-            today: datetime.date) -> bytes:
-    """The response body for a request body. Raises InvalidRequest."""
-    apps = [answer(app, releases, download_base) for app in parse_request(body)]
+def respond(body: bytes, offers: dict[str, Offer], download_base: str,
+            today: datetime.date, draw: Callable[[], float] = _RANDOM.random) -> bytes:
+    """The response body for a request body. Raises InvalidRequest. Nothing about
+    the choice is recorded."""
+    apps = [answer(app, offers, download_base, draw) for app in parse_request(body)]
     response = {"response": {"protocol": "4.0", "server": "ghost",
                              "daystart": {"elapsed_days": (today - _DAY_ZERO).days},
                              "apps": apps}}

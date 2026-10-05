@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ghost_update import manifest
 from ghost_update.identity import BROWSER_APPID, UPDATER_APPID
-from ghost_update.protocol import Release
+from ghost_update.protocol import Offer, Release
 
 
 def release(version: str, directory: Path, size: int = 10) -> Release:
@@ -114,6 +114,46 @@ class StoreTest(unittest.TestCase):
         (self.dir / manifest.FILE_NAME).unlink()
         with self.assertRaises(OSError):
             manifest.Store(self.dir)
+
+
+class CandidateTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir)
+        self.active = release("152.0.7977.14902", self.dir)
+        self.next = release("152.0.7977.14903", self.dir)
+
+    def test_round_trip_and_offers(self):
+        original = manifest.Manifest({
+            BROWSER_APPID: manifest.AppEntry(self.active, (), manifest.Candidate(self.next, 0.05)),
+            UPDATER_APPID: manifest.AppEntry(None, ())})
+        manifest.write(original, self.dir)
+        parsed = manifest.parse((self.dir / manifest.FILE_NAME).read_bytes(), self.dir)
+        self.assertEqual(parsed, original)
+        self.assertEqual(parsed.offers(), {BROWSER_APPID: Offer(self.active, self.next, 0.05),
+                                           UPDATER_APPID: Offer(None)})
+        doc = json.loads((self.dir / manifest.FILE_NAME).read_text())
+        self.assertEqual(doc["apps"][BROWSER_APPID]["candidate"]["fraction"], 0.05)
+        self.assertIsNone(doc["apps"][UPDATER_APPID]["candidate"])
+
+    def test_a_file_without_candidates_still_parses(self):
+        data = json.dumps({"apps": {BROWSER_APPID: {"active": None, "previous": []}}}).encode()
+        self.assertIsNone(manifest.parse(data, self.dir).apps[BROWSER_APPID].candidate)
+
+    def test_invalid_candidates(self):
+        good = {"version": "152.0.7977.14903", "file": self.next.file, "size": 10,
+                "sha256": "ab" * 32, "installer": "mini_installer.exe",
+                "arguments": "--do-not-launch-chrome"}
+        active = {**good, "version": "152.0.7977.14902", "file": self.active.file}
+        for name, candidate in (("no fraction", good), ("fraction 2", {**good, "fraction": 2}),
+                                ("fraction -0.1", {**good, "fraction": -0.1}),
+                                ("fraction true", {**good, "fraction": True}),
+                                ("not newer", {**active, "fraction": 0.5})):
+            with self.subTest(name):
+                data = json.dumps({"apps": {BROWSER_APPID: {
+                    "active": active, "previous": [], "candidate": candidate}}}).encode()
+                with self.assertRaises(manifest.ManifestError):
+                    manifest.parse(data, self.dir)
 
 
 if __name__ == "__main__":

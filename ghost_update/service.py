@@ -59,7 +59,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._refuse(400, "a request without a cup2key for a key this server has")
             return
         try:
-            payload = protocol.respond(body, self.server.store.current().releases(),
+            payload = protocol.respond(body, self.server.store.current().offers(),
                                        self.server.download_base, datetime.date.today())
         except protocol.InvalidRequest as e:
             self._refuse(400, f"an invalid request: {e}")

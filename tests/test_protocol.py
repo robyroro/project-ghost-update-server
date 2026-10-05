@@ -14,7 +14,9 @@ TODAY = datetime.date(2026, 10, 3)
 BASE = "https://203.0.113.5/releases"
 RELEASE = protocol.Release("152.0.7977.14902", "browser-152.0.7977.14902.crx3", 1000, "ab" * 32,
                            "mini_installer.exe", "--verbose-logging --do-not-launch-chrome")
-RELEASES = {BROWSER_APPID: RELEASE, UPDATER_APPID: None}
+RELEASES = {BROWSER_APPID: protocol.Offer(RELEASE), UPDATER_APPID: protocol.Offer(None)}
+CANDIDATE = protocol.Release("152.0.7977.14903", "browser-152.0.7977.14903.crx3", 2000,
+                             "cd" * 32, "mini_installer.exe", "")
 
 
 def answers(apps: list[dict]) -> list[dict]:
@@ -111,6 +113,44 @@ class InvalidRequestTest(unittest.TestCase):
         with self.assertRaises(protocol.InvalidRequest) as caught:
             protocol.respond(body, RELEASES, BASE, TODAY)
         self.assertNotIn("MARKER", str(caught.exception))
+
+
+def offered(offer: protocol.Offer, version: str, draw: float) -> str:
+    body = json.dumps({"request": {"protocol": "4.0", "apps": [
+        {"appid": BROWSER_APPID, "version": version, "updatecheck": {}}]}}).encode()
+    payload = protocol.respond(body, {BROWSER_APPID: offer}, BASE, TODAY, draw=lambda: draw)
+    check = json.loads(payload[5:])["response"]["apps"][0]["updatecheck"]
+    return check.get("nextversion", check["status"])
+
+
+class CandidateTest(unittest.TestCase):
+    def test_a_check_under_the_fraction_gets_the_candidate(self):
+        offer = protocol.Offer(RELEASE, CANDIDATE, 0.05)
+        self.assertEqual(offered(offer, "152.0.7977.14901", 0.04), "152.0.7977.14903")
+        self.assertEqual(offered(offer, "152.0.7977.14901", 0.05), "152.0.7977.14902")
+
+    def test_fraction_zero_offers_the_candidate_to_no_one(self):
+        offer = protocol.Offer(RELEASE, CANDIDATE, 0.0)
+        self.assertEqual(offered(offer, "152.0.7977.14901", 0.0), "152.0.7977.14902")
+
+    def test_fraction_one_offers_it_to_every_check(self):
+        offer = protocol.Offer(RELEASE, CANDIDATE, 1.0)
+        self.assertEqual(offered(offer, "152.0.7977.14901", 0.999999), "152.0.7977.14903")
+
+    def test_a_client_on_the_candidate_is_never_sent_back(self):
+        offer = protocol.Offer(RELEASE, CANDIDATE, 0.0)
+        self.assertEqual(offered(offer, "152.0.7977.14903", 0.5), "noupdate")
+
+    def test_a_candidate_without_an_active_release(self):
+        offer = protocol.Offer(None, CANDIDATE, 0.0)
+        self.assertEqual(offered(offer, "152.0.7977.14901", 0.5), "noupdate")
+
+    def test_events_draw_nothing(self):
+        draws = []
+        body = json.dumps({"request": {"protocol": "4.0", "apps": [
+            {"appid": BROWSER_APPID, "version": "1.0.0.0", "event": []}]}}).encode()
+        protocol.respond(body, RELEASES, BASE, TODAY, draw=lambda: draws.append(1) or 0.0)
+        self.assertEqual(draws, [])
 
 
 if __name__ == "__main__":
